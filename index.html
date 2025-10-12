@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Qualivon - Dynamic Attendance QR Code</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- QR Code Generation Library -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+    <style>
+        /* A simple transition for the progress bar */
+        #progress-bar {
+            transition: width 1s linear;
+        }
+        /* Custom styles for active/inactive buttons */
+        .btn-active {
+            background-color: #158d44; /* Qualivon Green */
+            color: white;
+            border-color: #158d44;
+        }
+        .btn-inactive {
+            background-color: white;
+            color: #6b7280; /* Gray-500 */
+            border-color: #d1d5db; /* Gray-300 */
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen font-sans">
+
+    <div class="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full m-4">
+        <header class="mb-6">
+            <h1 class="text-3xl font-bold text-gray-800">Qualivon Attendance</h1>
+            <p class="text-gray-500 mt-2">Select IN or OUT to generate the correct code.</p>
+        </header>
+
+        <!-- IN/OUT Button Selector -->
+        <div class="grid grid-cols-2 gap-4 mb-6">
+            <button id="btn-in" class="p-3 rounded-lg font-semibold border-2 transition-colors">
+                IN
+            </button>
+            <button id="btn-out" class="p-3 rounded-lg font-semibold border-2 transition-colors">
+                OUT
+            </button>
+        </div>
+        
+        <!-- Location Status Message -->
+        <div id="location-status" class="mb-4 text-sm text-center"></div>
+
+        <!-- Container where the QR code will be generated -->
+        <div id="qrcode-container" class="flex justify-center my-8 min-h-[288px] items-center">
+            <div id="qrcode" class="p-4 bg-white border rounded-lg shadow-inner"></div>
+        </div>
+
+        <!-- Display for the content of the QR code for verification -->
+        <div class="bg-gray-50 p-4 rounded-lg border border-gray-200 break-words min-h-[60px]">
+            <p class="text-xs text-gray-500 font-semibold mb-1">CURRENT QR CODE VALUE</p>
+            <p id="qr-content-display" class="text-sm font-mono text-gray-700"></p>
+        </div>
+
+        <!-- Countdown timer and progress bar -->
+        <div class="mt-8">
+            <p class="text-gray-600">New code in: <span id="countdown" class="font-bold">1:00</span></p>
+            <div class="w-full bg-gray-200 rounded-full h-2.5 mt-2">
+                <div id="progress-bar" class="bg-green-600 h-2.5 rounded-full" style="width: 100%"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- CONFIGURATION ---
+        const UPDATE_INTERVAL_MINUTES = 1; // Set the update interval in minutes
+        const UPDATE_INTERVAL_MS = UPDATE_INTERVAL_MINUTES * 60 * 1000;
+        let currentMode = 'IN'; // Can be 'IN' or 'OUT'
+
+        // --- DOM ELEMENTS ---
+        const qrcodeContainer = document.getElementById('qrcode');
+        const contentDisplay = document.getElementById('qr-content-display');
+        const countdownDisplay = document.getElementById('countdown');
+        const progressBar = document.getElementById('progress-bar');
+        const btnIn = document.getElementById('btn-in');
+        const btnOut = document.getElementById('btn-out');
+        const locationStatusEl = document.getElementById('location-status');
+        
+        let qrCodeInstance = null;
+        let countdownIntervalId = null;
+
+        /**
+         * Gets the user's current GPS location.
+         * @returns {Promise<string>} A promise that resolves with the location string or rejects with an error.
+         */
+        function getCurrentLocation() {
+            return new Promise((resolve, reject) => {
+                if (!navigator.geolocation) {
+                    reject("Geolocation is not supported by your browser.");
+                    return;
+                }
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        const lat = position.coords.latitude;
+                        const lon = position.coords.longitude;
+                        resolve(`lat:${lat.toFixed(5)},lon:${lon.toFixed(5)}`);
+                    },
+                    () => {
+                        reject("Location access denied. Please grant permission to generate a QR code.");
+                    }
+                );
+            });
+        }
+
+        /**
+         * Generates the QR code with location, timestamp, and selected mode.
+         * Falls back to generating a code without location if permission is denied.
+         */
+        async function generateQRCode() {
+            let locationString = null;
+            
+            // Clear previous error messages from the QR container and status area
+            qrcodeContainer.innerHTML = '';
+            locationStatusEl.textContent = '';
+
+            try {
+                // 1. Try to get current location. This will prompt the user for permission.
+                contentDisplay.textContent = 'Getting location...';
+                locationString = await getCurrentLocation();
+            } catch (error) {
+                // Handle errors (like location being denied)
+                console.error("Error getting location:", error);
+                locationStatusEl.innerHTML = `<span class="text-yellow-600 font-semibold">⚠️ Location access denied. Generating code without location.</span><br><span class="text-xs text-gray-500">To fix, allow location in browser settings and refresh.</span>`;
+            }
+
+            // 2. Get current date and format it for India Standard Time (IST)
+            const now = new Date();
+            const options = {
+                timeZone: 'Asia/Kolkata',
+                year: 'numeric', month: 'short', day: 'numeric',
+                hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+            };
+            const timeString = now.toLocaleString('en-IN', options);
+            
+            // 3. Create the full content string for the QR code, with or without location
+            const qrPrefix = `QUALIVON_${currentMode}_`;
+            const qrContent = locationString 
+                ? qrPrefix + locationString + "_" + timeString
+                : qrPrefix + "NO_LOCATION_" + timeString;
+
+            // 4. Generate the new QR code
+            qrCodeInstance = new QRCode(qrcodeContainer, {
+                text: qrContent,
+                width: 256,
+                height: 256,
+                colorDark: "#000000",
+                colorLight: "#ffffff",
+                correctLevel: QRCode.CorrectLevel.H
+            });
+
+            // 5. Update the display text for verification
+            contentDisplay.textContent = qrContent;
+
+            // 6. Start the visual countdown timer
+            startCountdown();
+        }
+
+        /**
+         * Manages the visual countdown timer and progress bar.
+         */
+        function startCountdown() {
+            if (countdownIntervalId) clearInterval(countdownIntervalId);
+            let secondsLeft = UPDATE_INTERVAL_MS / 1000;
+            countdownDisplay.textContent = `${UPDATE_INTERVAL_MINUTES}:00`;
+            progressBar.style.width = '100%';
+
+            countdownIntervalId = setInterval(() => {
+                secondsLeft--;
+                const minutes = Math.floor(secondsLeft / 60);
+                const seconds = secondsLeft % 60;
+                countdownDisplay.textContent = `${minutes}:${String(seconds).padStart(2, '0')}`;
+                const percentage = (secondsLeft / (UPDATE_INTERVAL_MS / 1000)) * 100;
+                progressBar.style.width = `${percentage}%`;
+                if (secondsLeft <= 0) clearInterval(countdownIntervalId);
+            }, 1000);
+        }
+
+        /**
+         * Updates the UI and regenerates the QR code when the mode changes.
+         * @param {'IN' | 'OUT'} newMode 
+         */
+        function setMode(newMode) {
+            currentMode = newMode;
+            if (newMode === 'IN') {
+                btnIn.classList.add('btn-active');
+                btnIn.classList.remove('btn-inactive');
+                btnOut.classList.add('btn-inactive');
+                btnOut.classList.remove('btn-active');
+            } else {
+                btnOut.classList.add('btn-active');
+                btnOut.classList.remove('btn-inactive');
+                btnIn.classList.add('btn-inactive');
+                btnIn.classList.remove('btn-active');
+            }
+            // Regenerate the QR code immediately on mode change
+            generateQRCode();
+        }
+
+        // --- EVENT LISTENERS ---
+        btnIn.addEventListener('click', () => setMode('IN'));
+        btnOut.addEventListener('click', () => setMode('OUT'));
+
+        // --- INITIALIZATION ---
+        // Set the initial mode to 'IN'
+        setMode('IN');
+        // Set an interval to regenerate the QR code automatically
+        setInterval(generateQRCode, UPDATE_INTERVAL_MS);
+
+    </script>
+
+</body>
+</html>
+
