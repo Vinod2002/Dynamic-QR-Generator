@@ -87,7 +87,7 @@
 
         /**
          * Gets the user's current GPS location.
-         * @returns {Promise<string>} A promise that resolves with the location string or rejects with an error.
+         * @returns {Promise<GeolocationPosition>} A promise that resolves with the GeolocationPosition object or rejects with an error.
          */
         function getCurrentLocation() {
             return new Promise((resolve, reject) => {
@@ -96,40 +96,67 @@
                     return;
                 }
                 navigator.geolocation.getCurrentPosition(
-                    (position) => {
-                        const lat = position.coords.latitude;
-                        const lon = position.coords.longitude;
-                        resolve(`lat:${lat.toFixed(5)},lon:${lon.toFixed(5)}`);
-                    },
-                    () => {
-                        reject("Location access denied. Please grant permission to generate a QR code.");
-                    }
+                    (position) => resolve(position),
+                    () => reject("Location access denied. Please grant permission.")
                 );
             });
         }
 
         /**
-         * Generates the QR code with location, timestamp, and selected mode.
-         * Falls back to generating a code without location if permission is denied.
+         * Gets a human-readable address from coordinates using a reverse geocoding API.
+         * @param {number} lat The latitude.
+         * @param {number} lon The longitude.
+         * @returns {Promise<string>} A promise that resolves with the address.
+         */
+        async function getAddressFromCoordinates(lat, lon) {
+            // Using OpenStreetMap's free Nominatim API for reverse geocoding
+            const apiUrl = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`;
+            try {
+                const response = await fetch(apiUrl);
+                if (!response.ok) {
+                    throw new Error(`Geocoding API failed with status: ${response.status}`);
+                }
+                const data = await response.json();
+                // The 'display_name' field has the full, formatted address.
+                if (data && data.display_name) {
+                     // Shorten the address to the first few parts to keep the QR code from getting too complex
+                    const addressParts = data.display_name.split(', ');
+                    return addressParts.slice(0, 4).join(', ');
+                } else {
+                    return "Address not found";
+                }
+            } catch (error) {
+                console.error("Reverse geocoding error:", error);
+                return "Could not fetch address";
+            }
+        }
+
+        /**
+         * Generates the QR code with address, timestamp, and selected mode.
          */
         async function generateQRCode() {
-            let locationString = null;
+            let addressString = "NO_ADDRESS";
             
-            // Clear previous error messages from the QR container and status area
             qrcodeContainer.innerHTML = '';
             locationStatusEl.textContent = '';
 
             try {
-                // 1. Try to get current location. This will prompt the user for permission.
+                // 1. Get current location position object
                 contentDisplay.textContent = 'Getting location...';
-                locationString = await getCurrentLocation();
+                const position = await getCurrentLocation();
+                const { latitude, longitude } = position.coords;
+
+                // 2. Get address from coordinates
+                contentDisplay.textContent = 'Fetching address...';
+                addressString = await getAddressFromCoordinates(latitude, longitude);
+                locationStatusEl.innerHTML = `<span class="text-green-700 font-semibold">✓ Location found</span>`;
+
             } catch (error) {
-                // Handle errors (like location being denied)
-                console.error("Error getting location:", error);
-                locationStatusEl.innerHTML = `<span class="text-yellow-600 font-semibold">⚠️ Location access denied. Generating code without location.</span><br><span class="text-xs text-gray-500">To fix, allow location in browser settings and refresh.</span>`;
+                console.error("Error during QR generation:", error);
+                locationStatusEl.innerHTML = `<span class="text-yellow-600 font-semibold">⚠️ Location access denied.</span><br><span class="text-xs text-gray-500">Allow location in browser settings and refresh.</span>`;
             }
 
-            // 2. Get current date and format it for India Standard Time (IST)
+            // 3. Get current date and format it for India Standard Time (IST)
             const now = new Date();
             const options = {
                 timeZone: 'Asia/Kolkata',
@@ -138,14 +165,14 @@
             };
             const timeString = now.toLocaleString('en-IN', options);
             
-            // 3. Create the full content string for the QR code, with or without location
+            // 4. Create the full content string for the QR code, with or without address
             const qrPrefix = `QUALIVON_${currentMode}_`;
-            const qrContent = locationString 
-                ? qrPrefix + locationString + "_" + timeString
+            const qrContent = addressString !== "NO_ADDRESS"
+                ? qrPrefix + addressString.replace(/ /g, '_').replace(/,/g, '') + "_" + timeString
                 : qrPrefix + "NO_LOCATION_" + timeString;
 
-            // 4. Generate the new QR code
-            qrCodeInstance = new QRCode(qrcodeContainer, {
+            // 5. Generate the new QR code
+            new QRCode(qrcodeContainer, {
                 text: qrContent,
                 width: 256,
                 height: 256,
@@ -154,10 +181,10 @@
                 correctLevel: QRCode.CorrectLevel.H
             });
 
-            // 5. Update the display text for verification
+            // 6. Update the display text for verification
             contentDisplay.textContent = qrContent;
 
-            // 6. Start the visual countdown timer
+            // 7. Start the visual countdown timer
             startCountdown();
         }
 
@@ -198,7 +225,6 @@
                 btnIn.classList.add('btn-inactive');
                 btnIn.classList.remove('btn-active');
             }
-            // Regenerate the QR code immediately on mode change
             generateQRCode();
         }
 
@@ -207,13 +233,10 @@
         btnOut.addEventListener('click', () => setMode('OUT'));
 
         // --- INITIALIZATION ---
-        // Set the initial mode to 'IN'
         setMode('IN');
-        // Set an interval to regenerate the QR code automatically
         setInterval(generateQRCode, UPDATE_INTERVAL_MS);
 
     </script>
 
 </body>
 </html>
-
